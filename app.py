@@ -4,96 +4,73 @@ import folium
 from streamlit_folium import st_folium
 from datetime import datetime
 import uuid
+import requests # Para consultar la API de rutas
 
-# Configuración de página
-st.set_page_config(page_title="Rastreador de Rutas", layout="wide")
+# Configuración
+st.set_page_config(page_title="Rastreador de Rutas Reales", layout="wide")
 
-st.title("📍 Dashboard de Recorrido Logístico")
+# NOTA: Para rutas reales necesitas una API. 
+# OSRM es un servicio gratuito que no requiere llave para pruebas.
+def get_route(coords):
+    """Obtiene la geometría de la ruta real usando OSRM"""
+    # Formato OSRM: lon,lat;lon,lat
+    locs = ";".join([f"{lon},{lat}" for lat, lon in coords])
+    url = f"http://router.project-osrm.org/route/v1/driving/{locs}?overview=full&geometries=geojson"
+    r = requests.get(url)
+    if r.status_code == 200:
+        data = r.json()
+        # Retorna la lista de coordenadas del camino real
+        return [[p[1], p[0]] for p in data['routes'][0]['geometry']['coordinates']]
+    return coords # Si falla, vuelve a línea recta
 
-# Inicialización segura de la sesión
+st.title("📍 Dashboard con Recorrido Real por Calles")
+
 if 'puntos' not in st.session_state:
     st.session_state.puntos = []
 
 # --- PANEL LATERAL ---
 with st.sidebar:
     st.header("Añadir Nuevo Punto")
-    with st.form("formulario_punto", clear_on_submit=True):
-        direccion = st.text_input("Nombre del Punto / Dirección", placeholder="Ej: Punto de Entrega")
-        
-        # Campo único para Latitud y Longitud
-        coords_input = st.text_input("Coordenadas (Latitud, Longitud)", placeholder="-2.916000, -79.037895")
-        
-        horario = st.time_input("Horario de llegada", datetime.now().time())
-        submit = st.form_submit_button("Agregar a la ruta")
-        
-        if submit:
+    with st.form("formulario", clear_on_submit=True):
+        direccion = st.text_input("Nombre / Dirección")
+        coords_input = st.text_input("Coordenadas (Lat, Lon)", placeholder="-2.916, -79.037")
+        horario = st.time_input("Horario", datetime.now().time())
+        if st.form_submit_button("Agregar"):
             try:
-                # Limpiar y separar coordenadas
                 lat_str, lon_str = coords_input.replace(" ", "").split(',')
-                lat, lon = float(lat_str), float(lon_str)
-                
-                # Crear diccionario con ID único para evitar KeyErrors
-                nuevo_punto = {
+                st.session_state.puntos.append({
                     "id": str(uuid.uuid4()), 
-                    "Dirección": direccion if direccion else "Sin nombre",
-                    "Latitud": lat,
-                    "Longitud": lon,
-                    "Horario": horario
-                }
-                st.session_state.puntos.append(nuevo_punto)
-                st.rerun() # Refrescar para mostrar el marcador de inmediato
-            except Exception:
-                st.error("Formato inválido. Usa: latitud, longitud (ej: -2.91, -78.46)")
+                    "Dirección": direccion, "Latitud": float(lat_str), "Longitud": float(lon_str), "Horario": horario
+                })
+                st.rerun()
+            except: st.error("Formato: lat, lon")
 
-    if st.button("Limpiar todo el recorrido"):
-        st.session_state.puntos = []
-        st.rerun()
-
-# --- CUERPO PRINCIPAL ---
+# --- CUERPO ---
 if st.session_state.puntos:
-    # Convertir a DataFrame y asegurar que el ID exista
-    df = pd.DataFrame(st.session_state.puntos)
-    df = df.sort_values(by="Horario")
-
+    df = pd.DataFrame(st.session_state.puntos).sort_values(by="Horario")
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.subheader("📋 Puntos en la Ruta")
         for i, row in df.iterrows():
             with st.container(border=True):
                 st.write(f"**{row['Horario'].strftime('%H:%M')}** - {row['Dirección']}")
-                # Botón de eliminar usando el ID único
-                if st.button(f"Eliminar", key=f"btn_{row['id']}"):
+                if st.button("Eliminar", key=f"del_{row['id']}"):
                     st.session_state.puntos = [p for p in st.session_state.puntos if p['id'] != row['id']]
                     st.rerun()
 
     with col2:
-        st.subheader("🗺️ Mapa de Visualización")
+        m = folium.Map(location=[df['Latitud'].mean(), df['Longitud'].mean()], zoom_start=14)
         
-        # Crear mapa base
-        centro_lat = df['Latitud'].mean()
-        centro_lon = df['Longitud'].mean()
-        m = folium.Map(location=[centro_lat, centro_lon], zoom_start=13)
-
-        puntos_ruta = []
+        puntos_clave = []
         for _, row in df.iterrows():
             pos = [row['Latitud'], row['Longitud']]
-            puntos_ruta.append(pos)
-            
-            # Marcador estándar para asegurar visibilidad
-            folium.Marker(
-                location=pos,
-                popup=f"{row['Dirección']} ({row['Horario'].strftime('%H:%M')})",
-                tooltip=row['Dirección'],
-                icon=folium.Icon(color="red", icon="info-sign")
-            ).add_to(m)
+            puntos_clave.append(pos)
+            folium.Marker(pos, tooltip=row['Dirección']).add_to(m)
 
-        # Línea de recorrido
-        if len(puntos_ruta) > 1:
-            folium.PolyLine(puntos_ruta, color="blue", weight=3).add_to(m)
-            # Ajustar el mapa automáticamente para que se vean todos los puntos
-            m.fit_bounds(puntos_ruta)
+        if len(puntos_clave) > 1:
+            # ¡AQUÍ ESTÁ EL CAMBIO! Obtenemos el camino por las calles
+            camino_real = get_route(puntos_clave)
+            folium.PolyLine(camino_real, color="blue", weight=5, opacity=0.7).add_to(m)
+            m.fit_bounds(camino_real)
 
-        st_folium(m, width="100%", height=600, key="mapa_principal")
-else:
-    st.info("Introduce una dirección y coordenadas en el panel izquierdo.")
+        st_folium(m, width="100%", height=600)
