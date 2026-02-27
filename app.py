@@ -8,7 +8,7 @@ import requests
 from io import BytesIO
 
 # Configuración inicial
-st.set_page_config(page_title="Gestión de Rutas y Técnicos", layout="wide")
+st.set_page_config(page_title="Gestión de Rutas", layout="wide")
 
 def get_route(coords):
     try:
@@ -21,14 +21,8 @@ def get_route(coords):
     except: pass
     return coords 
 
-# --- INICIALIZACIÓN ---
 if 'puntos' not in st.session_state:
     st.session_state.puntos = []
-
-# Parche de seguridad para datos antiguos
-for p in st.session_state.puntos:
-    if 'id' not in p: p['id'] = str(uuid.uuid4())
-    if 'Teléfono' not in p: p['Teléfono'] = "No registrado"
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -68,17 +62,15 @@ if st.session_state.puntos:
         folium.PolyLine(camino, color="blue", weight=5).add_to(m)
         m.fit_bounds(camino)
     
-    st_folium(m, width="100%", height=450)
+    st_folium(m, width="100%", height=500)
 
     # --- TABLA DE GESTIÓN Y EXCEL ---
     st.markdown("---")
     col_t1, col_t2 = st.columns([4, 1])
     col_t1.subheader("📋 Detalle de la Ruta")
     
-    # Función para generar Excel
     def to_excel(df_excel):
         output = BytesIO()
-        # Convertir horario a string para que Excel no tenga conflictos
         df_export = df_excel.copy()
         df_export['Horario'] = df_export['Horario'].apply(lambda x: x.strftime('%H:%M'))
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -92,29 +84,4 @@ if st.session_state.puntos:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Tabla visual
     st.dataframe(df[['Horario', 'Dirección', 'Teléfono', 'Latitud', 'Longitud']], use_container_width=True)
-    
-    # Botones de eliminación individuales
-    with st.expander("Opciones de edición"):
-        for i, r in df.iterrows():
-            if st.button(f"Eliminar {r['Dirección']} ({r['Horario']})", key=f"d_{r['id']}"):
-                st.session_state.puntos = [p for p in st.session_state.puntos if p['id'] != r['id']]
-                st.rerun()
-
-# --- TABLA DE TÉCNICOS (REGISTRO GUARDADO) ---
-st.markdown("---")
-st.subheader("🧑‍🔧 Técnicos a Nivel Nacional")
-data_tecnicos = [
-    ["Guayaquil (GYE)", "Carlos Jama", ""],
-    ["Guayaquil (GYE)", "Manuel Vera", ""],
-    ["Quito (UIO)", "Javier Quiguango", ""],
-    ["Quito (UIO)", "Wilson Quiguango", ""],
-    ["Cuenca (CUE)", "Juan Diego Quezada", ""],
-    ["Cuenca (CUE)", "Juan Farez", ""],
-    ["Cuenca (CUE)", "Santiago Farez", ""],
-    ["Cuenca (CUE)", "Xavier Ramón", ""],
-]
-df_tec = pd.DataFrame(data_tecnicos, columns=["Ciudad", "Técnicos", "Órdenes de Servicio Resueltas"])
-st.table(df_tec)
-st.info(f"**TOTAL NACIONAL: 8 Técnicos**")
